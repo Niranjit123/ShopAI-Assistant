@@ -3,9 +3,14 @@ import { NextResponse } from 'next/server';
 
 import GeminiClient from '@/lib/gemini';
 import ShopifyClient from '@/lib/shopify';
-import TranslatorClient from '@/lib/translator'; // Using NLLB translator now
+import * as translation from '@/lib/translation';
+import { dispatch, INTENT_TYPES } from '@/lib/agents/dispatchAgent';
 
-import { classifyIntent, extractEntities, ConversationContext, INTENTS } from '@/lib/intent-recognition';
+import { 
+  classifyIntentWithLLM as classifyIntent, 
+  extractEntitiesWithLLM as extractEntities,
+  ConversationContext 
+} from '@/lib/intent-recognition';
 
 // Initialize clients
 const gemini = new GeminiClient(process.env.GEMINI_API_KEY);
@@ -13,24 +18,117 @@ const shopify = new ShopifyClient(
   process.env.SHOPIFY_STORE_DOMAIN,
   process.env.SHOPIFY_STOREFRONT_ACCESS_TOKEN
 );
-// Updated to use Hugging Face API key
-const translator = new TranslatorClient(process.env.HUGGINGFACE_API_KEY);
 
 const sessions = {}; // Store conversation sessions
+
+const INTENT_MAP = {
+  search_products: INTENT_TYPES.PRODUCT,
+  product_details: INTENT_TYPES.PRODUCT,
+  add_to_cart: INTENT_TYPES.PRODUCT,
+  checkout: INTENT_TYPES.SUPPORT,
+  order_status: INTENT_TYPES.SUPPORT,
+  general_inquiry: INTENT_TYPES.FAQ,
+};
+
+// Helper function to process products and extract images
+const processProductsWithImages = (products) => {
+  if (!products || !Array.isArray(products)) {
+    console.log('❌ No products array provided to processProductsWithImages');
+    return [];
+  }
+  
+  console.log(`🔄 Processing ${products.length} products for images...`);
+  
+  return products.map((product, index) => {
+    console.log(`📦 Processing product ${index + 1}:`, {
+      id: product.id,
+      title: product.title,
+      hasImages: !!(product.images && product.images.length > 0),
+      hasImage: !!product.image,
+      imageCount: product.images ? product.images.length : 0
+    });
+    
+    const processedProduct = { ...product };
+    
+    // Ensure image structure is consistent
+    if (product.images && product.images.length > 0) {
+      const imageUrl = product.images[0].url || product.images[0].src;
+      processedProduct.image = {
+        url: imageUrl,
+        alt: product.title || 'Product Image'
+      };
+      console.log(`✅ Image found for ${product.title}:`, imageUrl);
+    } else if (product.image) {
+      // Handle single image case
+      const imageUrl = product.image.url || product.image.src || product.image;
+      processedProduct.image = {
+        url: imageUrl,
+        alt: product.title || 'Product Image'
+      };
+      console.log(`✅ Single image found for ${product.title}:`, imageUrl);
+    } else {
+      console.log(`❌ No image found for ${product.title}`);
+    }
+    
+    // Ensure price structure is consistent
+    if (!processedProduct.priceRange && product.price) {
+      processedProduct.priceRange = {
+        minVariantPrice: {
+          amount: product.price
+        }
+      };
+    }
+    
+    return processedProduct;
+  });
+};
+
+// Helper function to create chat images from products
+const createChatImages = (products) => {
+  if (!products || !Array.isArray(products)) {
+    console.log('❌ No products provided to createChatImages');
+    return [];
+  }
+  
+  const chatImages = products
+    .filter(product => {
+      const hasImage = product.image && product.image.url;
+      if (!hasImage) {
+        console.log(`⚠️ Filtering out ${product.title} - no image URL`);
+      }
+      return hasImage;
+    })
+    .slice(0, 6) // Limit to 6 images to avoid overwhelming the chat
+    .map(product => ({
+      url: product.image.url,
+      alt: product.title || 'Product',
+      title: product.title,
+      price: product.priceRange?.minVariantPrice?.amount || product.price
+    }));
+    
+  console.log(`🖼️ Created ${chatImages.length} chat images from ${products.length} products`);
+  return chatImages;
+};
 
 export async function POST(request) {
   try {
     const { message, messageHistory, sessionId = 'default' } = await request.json();
     
-    console.log(`Received message: "${message}"`);
-    
-    // Translate incoming message to English using automatic language detection
-    let translatedMessage;
+    console.log(`📨 Received message: "${message}"`);
+
+    // Detect language and translate incoming message to English if needed
+    let translatedMessage = message;
+    let detectedLang = 'en';
     try {
-      translatedMessage = await translator.translateToEnglish(message);
-      console.log(`Translated to English: "${translatedMessage}"`);
+      detectedLang = await translation.detectLanguage(message);
+      if (detectedLang !== 'en') {
+        translatedMessage = await translation.translateText(message, detectedLang, 'en');
+        console.log(`🌐 Detected language: ${detectedLang}, translated to English: "${translatedMessage}"`);
+      } else {
+        console.log('🌐 Message is already in English.');
+      }
     } catch (translationError) {
-      console.error('Translation error:', translationError);
+      console.error('❌ Translation error:', translationError);
       translatedMessage = message; // Fallback to original message
     }
 
@@ -45,215 +143,115 @@ export async function POST(request) {
     const session = sessions[sessionId];
 
     // Step 1: Classify intent
-    const { intent, confidence } = classifyIntent(translatedMessage);
-    console.log(`Classified intent: ${intent} (confidence: ${confidence})`);
+    const { intent, confidence } = await classifyIntent(translatedMessage, gemini);
+    console.log(`🎯 Classified intent: ${intent} (confidence: ${confidence})`);
 
+    // Map to our agent system intent
+    const agentIntent = INTENT_MAP[intent] || INTENT_TYPES.FALLBACK;
+    console.log(`🔄 Mapped intent to agent system: ${agentIntent}`);
+    
     // Step 2: Extract entities
-    let entities = extractEntities(translatedMessage, intent);
-
+    let entities = await extractEntities(translatedMessage, intent, gemini);
+    console.log(`📊 Extracted entities:`, JSON.stringify(entities, null, 2));
+    
     // Step 3: Apply contextual understanding
     const { intent: contextualIntent, entities: contextualEntities } = 
       session.context.updateContext(translatedMessage, intent, entities);
 
-    // Step 4: Process intent
-    let response = '';
+    // Step 4: Process intent using agent system
+    console.log(`🤖 Dispatching to agent with intent: ${agentIntent}`);
+    const agentResponse = await dispatch(translatedMessage, agentIntent);
+    
+    // 🔍 DETAILED LOGGING OF AGENT RESPONSE
+    console.log('🔍 FULL AGENT RESPONSE:', JSON.stringify(agentResponse, null, 2));
+    
+    if (agentResponse.metadata) {
+      console.log('📋 Agent Response Metadata:', JSON.stringify(agentResponse.metadata, null, 2));
+      
+      if (agentResponse.metadata.products) {
+        console.log(`📦 Found ${agentResponse.metadata.products.length} products in agent response`);
+        agentResponse.metadata.products.forEach((product, index) => {
+          console.log(`Product ${index + 1}:`, {
+            id: product.id,
+            title: product.title,
+            price: product.price,
+            priceRange: product.priceRange,
+            hasImages: !!(product.images && product.images.length > 0),
+            hasImage: !!product.image,
+            imageStructure: product.images ? product.images[0] : product.image
+          });
+        });
+      }
+    }
+    
+    // Step 5: Format response
+    let response = agentResponse.content;
     let products = [];
     let cartUpdate = null;
+    let chatImages = [];
 
-    switch (contextualIntent) {
-      case INTENTS.SEARCH_PRODUCTS:
-        if (!session.cartId) {
-          const cart = await shopify.createCart();
-          session.cartId = cart.id;
-          session.context.setCartId(cart.id);
-        }
+    // Handle special cases for product-related intents
+    if (agentIntent === INTENT_TYPES.PRODUCT) {
+      if (agentResponse.metadata?.products) {
+        console.log('🔄 Processing products with images...');
+        products = processProductsWithImages(agentResponse.metadata.products);
+        chatImages = createChatImages(products);
         
-        const searchTerms = contextualEntities.search_terms?.length > 0 
-          ? contextualEntities.search_terms 
-          : [translatedMessage];
-        
-        products = await shopify.searchProducts(searchTerms, contextualEntities.filters);
-        
-        session.context.setCurrentProducts(products);
-
-        const searchContext = `
-          The user is searching for products with these terms: ${searchTerms.join(', ')}.
-          I found ${products.length} products.
-          ${products.length > 0 ? 'Here are some of the product titles: ' + 
-            products.slice(0, 3).map(p => p.title).join(', ') + '...' : 'No products were found.'}
-        `;
-
-        response = await gemini.generateResponse(
-          `You are a helpful e-commerce assistant. ${searchContext}
-           Respond to this customer search: "${translatedMessage}"
-           Be concise and friendly. Don't list all the products, just mention that you found some options.`,
-          messageHistory
-        );
-        break;
-
-      case INTENTS.PRODUCT_DETAILS:
-        let productToDescribe = null;
-        
-        if (contextualEntities.product_id) {
-          productToDescribe = await shopify.getProductDetails(contextualEntities.product_id);
-        } else if (session.context.current_products?.length > 0) {
-          const lowerMessage = translatedMessage.toLowerCase();
-          productToDescribe = session.context.current_products.find(p => 
-            lowerMessage.includes(p.title.toLowerCase())
-          );
-          
-          if (productToDescribe) {
-            session.context.setCurrentProduct(productToDescribe.id);
-          }
+        // Enhance response message when products are found
+        if (products.length > 0) {
+          const productCount = products.length;
+          const categoryHint = entities.category ? ` in ${entities.category}` : '';
+          response += `\n\nI found ${productCount} product${productCount > 1 ? 's' : ''}${categoryHint} that might interest you:`;
         }
-        
-        if (productToDescribe) {
-          const productContext = `
-            Product Name: ${productToDescribe.title}
-            Price: ${productToDescribe.priceRange.minVariantPrice.amount} ${productToDescribe.priceRange.minVariantPrice.currencyCode}
-            Description: ${productToDescribe.description}
-            
-            It has ${productToDescribe.variants.length} variants available.
-          `;
-
-          response = await gemini.generateResponse(
-            `You are a helpful e-commerce assistant. ${productContext}
-             Respond to this customer asking about the product: "${translatedMessage}"
-             Be enthusiastic but honest about the product. Mention key details like price and features.`,
-            messageHistory
-          );
-        } else {
-          response = await gemini.generateResponse(
-            `You are a helpful e-commerce assistant. The customer is asking about a product, 
-             but I'm not sure which one they're referring to. Ask them for clarification.
-             Customer query: "${translatedMessage}"`,
-            messageHistory
-          );
-        }
-        break;
-
-      case INTENTS.ADD_TO_CART:
-        if (contextualEntities.product_id && session.cartId) {
-          try {
-            const product = session.context.current_products.find(
-              p => p.id === contextualEntities.product_id
-            );
-            
-            if (product) {
-              const variantId = contextualEntities.variant_id || product.variants[0].id;
-              const quantity = contextualEntities.quantity || 1;
-
-              const updatedCart = await shopify.addToCart(
-                session.cartId, 
-                variantId, 
-                quantity
-              );
-
-              const cartItems = updatedCart.lines.edges.map(edge => {
-                const item = edge.node;
-                const merchandise = item.merchandise;
-
-                return {
-                  id: item.id,
-                  title: merchandise.product.title,
-                  variant: merchandise.title,
-                  price: merchandise.price.amount,
-                  quantity: item.quantity
-                };
-              });
-
-              cartUpdate = {
-                cart: cartItems,
-                total: updatedCart.cost.totalAmount.amount
-              };
-
-              response = await gemini.generateResponse(
-                `You are a helpful e-commerce assistant. I've added ${product.title} to the customer's cart.
-                 The cart now has ${cartItems.length} items with a total of ${updatedCart.cost.totalAmount.amount} ${updatedCart.cost.totalAmount.currencyCode}.
-                 Respond to the customer's request: "${translatedMessage}"
-                 Be enthusiastic and brief. Confirm the item was added and ask if they want to continue shopping or checkout.`,
-                messageHistory
-              );
-            } else {
-              response = "I'm not sure which product you want to add to your cart. Could you specify which item you're interested in?";
-            }
-          } catch (error) {
-            console.error('Error adding to cart:', error);
-            response = "I'm sorry, I couldn't add that item to your cart. Please try again.";
-          }
-        } else if (!session.cartId) {
-          const cart = await shopify.createCart();
-          session.cartId = cart.id;
-          session.context.setCartId(cart.id);
-
-          response = "I've created a shopping cart for you. Could you specify which product you'd like to add?";
-        } else {
-          response = "I'm not sure which product you want to add to your cart. Could you specify which item you're interested in?";
-        }
-        break;
-
-      case INTENTS.CHECKOUT:
-        if (session.cartId) {
-          const cart = await shopify.getCart(session.cartId);
-
-          if (cart && cart.lines.edges.length > 0) {
-            response = `Great! You're ready to checkout. Here's the checkout link: ${cart.checkoutUrl}`;
-          } else {
-            response = "Your cart is empty. Would you like to browse some products first?";
-          }
-        } else {
-          response = "You don't have an active cart yet. Let's find some products for you first.";
-        }
-        break;
-
-      case INTENTS.ORDER_STATUS:
-        response = await gemini.generateResponse(
-          `You are a helpful e-commerce assistant. The customer is asking about order status: "${translatedMessage}"
-           Explain that they would need to provide an order number, and that you can check the status for them.
-           For this demo version, explain that order tracking isn't fully implemented yet.`,
-          messageHistory
-        );
-        break;
-
-      default:
-        if (!session.cartId) {
-          const cart = await shopify.createCart();
-          session.cartId = cart.id;
-          session.context.setCartId(cart.id);
-        }
-
-        response = await gemini.generateResponse(
-          `You are a helpful e-commerce assistant for an online store.
-           Respond to this customer message: "${translatedMessage}"
-           Be friendly and concise. If appropriate, suggest that they can ask about products, 
-           add items to cart, or check their cart.`,
-          messageHistory
-        );
+      }
+      if (agentResponse.metadata?.cartUpdate) {
+        cartUpdate = agentResponse.metadata.cartUpdate;
+      }
     }
 
-    console.log(`Generated response: "${response}"`);
+    console.log(`💬 Generated response: "${response}"`);
+    console.log(`📦 Found ${products.length} products with ${chatImages.length} images`);
 
-    // Translate Gemini's English response back to the original language
-    let translatedResponse;
-    try {
-      translatedResponse = await translator.translateToManipuri(response);
-      console.log(`Translated response: "${translatedResponse}"`);
-    } catch (translationError) {
-      console.error('Response translation error:', translationError);
-      translatedResponse = response; // Fallback to English response
+    // 🔍 LOG FINAL PROCESSED PRODUCTS
+    console.log('🔍 FINAL PROCESSED PRODUCTS:', JSON.stringify(products, null, 2));
+    console.log('🔍 FINAL CHAT IMAGES:', JSON.stringify(chatImages, null, 2));
+
+    // Translate response back to user's language if needed
+    let translatedResponse = response;
+    if (detectedLang !== 'en') {
+      try {
+        translatedResponse = await translation.translateText(response, 'en', detectedLang);
+      } catch (translationError) {
+        console.error('❌ Response translation error:', translationError);
+        translatedResponse = response;
+      }
     }
 
-    return NextResponse.json({ 
-      message: translatedResponse,
-      products, 
+    const finalResponse = {
+      response: translatedResponse,
+      products,
       cartUpdate,
-      intent: contextualIntent
-    });
+      sessionId,
+      intent: contextualIntent,
+      entities: contextualEntities,
+      metadata: {
+        ...agentResponse.metadata,
+        chatImages: chatImages.length > 0 ? chatImages : undefined,
+        hasImages: chatImages.length > 0
+      }
+    };
+
+    console.log('🚀 FINAL API RESPONSE:', JSON.stringify(finalResponse, null, 2));
+
+    return NextResponse.json(finalResponse);
 
   } catch (error) {
-    console.error('Error in chat API:', error);
+    console.error('❌ Error in chat API:', error);
     return NextResponse.json(
-      { error: 'An error occurred processing your message' },
+      { 
+        error: 'An error occurred processing your message',
+        response: 'I apologize, but I encountered an error while processing your request. Please try again or rephrase your question.'
+      },
       { status: 500 }
     );
   }

@@ -9,15 +9,20 @@
     "lint": "next lint"
   },
   "dependencies": {
-    "next": "15.3.1",
-    "react": "^19.0.0",
-    "react-dom": "^19.0.0"
+    "@vitalets/google-translate-api": "^2.0.1",
+    "bootstrap": "^5.3.6",
+    "detect-language": "^1.0.2",
+    "next": "14.1.0",
+    "osenv": "^0.1.5",
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0",
+    "uuid": "^9.0.1"
   },
   "devDependencies": {
-    "@tailwindcss/postcss": "^4",
-    "autoprefixer": "^10.4.21",
-    "postcss": "^8.5.3",
-    "tailwindcss": "^4.1.4"
+    "@types/node": "^20.11.16",
+    "@types/react": "^18.2.52",
+    "@types/react-dom": "^18.2.18",
+    "typescript": "^5.3.3"
   },
   "description": "This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://github.com/vercel/next.js/tree/canary/packages/create-next-app).",
   "main": "index.js",

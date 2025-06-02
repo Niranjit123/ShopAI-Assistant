@@ -1,32 +1,176 @@
 export default function ProductCard({ product, onAddToCart }) {
-    const defaultVariantId = product.variants && product.variants.length > 0 
-      ? product.variants[0].id 
-      : null;
-    
-    return (
-      <div className="border rounded-lg overflow-hidden shadow-sm hover:shadow-md transition">
-        {product.image && (
-          <img 
-            src={product.image.url} 
-            alt={product.title} 
-            className="w-full h-48 object-cover"
+  console.log('🎴 ProductCard received product:', {
+    id: product.id,
+    title: product.title,
+    hasImage: !!product.image,
+    imageUrl: product.image?.url,
+    price: product.priceRange?.minVariantPrice?.amount || product.price
+  });
+
+  const defaultVariantId = product.variants && product.variants.length > 0 
+    ? product.variants[0].id 
+    : product.id; // Fallback to product ID if no variants
+  
+  const productPrice = product.priceRange?.minVariantPrice?.amount || product.price || '0.00';
+  const comparisonPrice = (parseFloat(productPrice) * 1.2).toFixed(2);
+  
+  return (
+    <div className="card h-100 shadow-sm border-0 overflow-hidden" style={{ marginBottom: '2rem' }}>
+      <div className="position-relative">
+        {product.image && product.image.url ? (
+          <img
+            src={product.image.url}
+            alt={product.image.alt || product.title}
+            className="card-img-top"
+            style={{ 
+              objectFit: 'cover', 
+              height: '250px', 
+              width: '100%',
+              transition: 'transform 0.3s ease'
+            }}
+            onMouseOver={(e) => e.target.style.transform = 'scale(1.05)'}
+            onMouseOut={(e) => e.target.style.transform = 'scale(1)'}
+            onError={(e) => {
+              console.error('❌ Image failed to load:', product.image.url);
+              e.target.style.display = 'none';
+              e.target.nextSibling.style.display = 'flex';
+            }}
           />
-        )}
-        <div className="p-4">
-          <h3 className="font-semibold text-lg">{product.title}</h3>
-          <p className="text-gray-600 text-sm mt-1">{product.description}</p>
-          <div className="mt-2 font-medium">
-            ${product.priceRange.minVariantPrice.amount}
+        ) : null}
+        
+        {/* Fallback placeholder for missing images */}
+        <div 
+          className="card-img-top bg-light d-flex align-items-center justify-content-center"
+          style={{ 
+            height: '250px',
+            display: product.image && product.image.url ? 'none' : 'flex'
+          }}
+        >
+          <div className="text-center">
+            <i className="bi bi-image text-muted mb-2" style={{ fontSize: '3rem' }}></i>
+            <p className="text-muted small mb-0">No Image Available</p>
           </div>
-          
-          <button
-            onClick={() => onAddToCart(defaultVariantId)}
-            className="mt-3 bg-blue-600 text-white px-3 py-1 rounded text-sm hover:bg-blue-700 transition"
-            disabled={!defaultVariantId}
+        </div>
+        
+        {/* Sale Badge */}
+        <div className="position-absolute top-0 end-0 m-2">
+          <span className="badge bg-danger">
+            <i className="bi bi-fire me-1"></i>
+            Sale
+          </span>
+        </div>
+        
+        {/* Quick View Button */}
+        <div className="position-absolute bottom-0 end-0 m-2">
+          <button 
+            className="btn btn-white btn-sm rounded-circle shadow-sm opacity-75"
+            title="Quick View"
           >
-            Add to Cart
+            <i className="bi bi-eye"></i>
           </button>
         </div>
       </div>
-    );
-  }
+      
+      <div className="card-body d-flex flex-column p-4">
+        <div className="mb-3">
+          <h5 className="card-title mb-2 fw-bold" style={{
+            fontSize: '1.1rem',
+            lineHeight: '1.3',
+            height: '2.6rem',
+            overflow: 'hidden',
+            display: '-webkit-box',
+            WebkitLineClamp: 2,
+            WebkitBoxOrient: 'vertical'
+          }} title={product.title}>
+            {product.title}
+          </h5>
+          
+          <p className="card-text text-muted small mb-0" style={{ 
+            height: '4rem',
+            overflow: 'hidden',
+            display: '-webkit-box',
+            WebkitLineClamp: 3,
+            WebkitBoxOrient: 'vertical',
+            lineHeight: '1.4'
+          }}>
+            {product.description || 'High-quality product with excellent features and great value for money.'}
+          </p>
+        </div>
+        
+        <div className="mt-auto">
+          {/* Price and Rating Section */}
+          <div className="d-flex justify-content-between align-items-start mb-3">
+            <div>
+              <div className="d-flex align-items-baseline gap-2 mb-1">
+                <span className="h5 text-success fw-bold mb-0">
+                  ${parseFloat(productPrice).toFixed(2)}
+                </span>
+                <small className="text-muted text-decoration-line-through">
+                  ${comparisonPrice}
+                </small>
+              </div>
+              <small className="text-success fw-medium">
+                <i className="bi bi-percent me-1"></i>
+                Save {Math.round((1 - parseFloat(productPrice) / parseFloat(comparisonPrice)) * 100)}%
+              </small>
+            </div>
+            
+            <div className="text-end">
+              <div className="d-flex align-items-center text-warning mb-1">
+                {[...Array(5)].map((_, i) => (
+                  <i key={i} className={`bi bi-star${i < 4 ? '-fill' : ''} me-1`} style={{ fontSize: '0.8rem' }}></i>
+                ))}
+                <small className="text-dark ms-1">4.5</small>
+              </div>
+              <small className="text-muted">(128 reviews)</small>
+            </div>
+          </div>
+          
+          {/* Action Buttons */}
+          <div className="d-grid gap-2">
+            <button
+              onClick={() => {
+                console.log('🛒 Adding to cart:', { productId: product.id, variantId: defaultVariantId });
+                onAddToCart(defaultVariantId);
+              }}
+              className="btn btn-primary btn-lg"
+              disabled={!defaultVariantId}
+            >
+              <i className="bi bi-cart-plus me-2"></i>
+              Add to Cart
+            </button>
+            
+            <div className="d-flex gap-2">
+              <button className="btn btn-outline-secondary flex-fill">
+                <i className="bi bi-heart me-1"></i>
+                Wishlist
+              </button>
+              <button className="btn btn-outline-info flex-fill">
+                <i className="bi bi-share me-1"></i>
+                Share
+              </button>
+            </div>
+          </div>
+          
+          {/* Product Features */}
+          <div className="mt-3 pt-3 border-top">
+            <div className="row g-0 text-center">
+              <div className="col-4">
+                <i className="bi bi-truck text-success d-block mb-1"></i>
+                <small className="text-muted">Free Ship</small>
+              </div>
+              <div className="col-4">
+                <i className="bi bi-arrow-clockwise text-info d-block mb-1"></i>
+                <small className="text-muted">Easy Return</small>
+              </div>
+              <div className="col-4">
+                <i className="bi bi-shield-check text-warning d-block mb-1"></i>
+                <small className="text-muted">Warranty</small>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
