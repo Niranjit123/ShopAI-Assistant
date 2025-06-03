@@ -160,7 +160,7 @@ export async function POST(request) {
 
     // Step 4: Process intent using agent system
     console.log(`🤖 Dispatching to agent with intent: ${agentIntent}`);
-    const agentResponse = await dispatch(translatedMessage, agentIntent);
+    const agentResponse = await dispatch(translatedMessage, agentIntent, contextualEntities);
     
     // 🔍 DETAILED LOGGING OF AGENT RESPONSE
     console.log('🔍 FULL AGENT RESPONSE:', JSON.stringify(agentResponse, null, 2));
@@ -197,11 +197,12 @@ export async function POST(request) {
         products = processProductsWithImages(agentResponse.metadata.products);
         chatImages = createChatImages(products);
         
-        // Enhance response message when products are found
+        // Don't append product information to the chat message
+        // Instead, just mention that products were found without listing them
         if (products.length > 0) {
           const productCount = products.length;
           const categoryHint = entities.category ? ` in ${entities.category}` : '';
-          response += `\n\nI found ${productCount} product${productCount > 1 ? 's' : ''}${categoryHint} that might interest you:`;
+          response += `\n\nI found ${productCount} product${productCount > 1 ? 's' : ''}${categoryHint} that might interest you. Check out the product section below.`;
         }
       }
       if (agentResponse.metadata?.cartUpdate) {

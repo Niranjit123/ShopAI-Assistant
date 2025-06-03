@@ -1,176 +1,94 @@
-export default function ProductCard({ product, onAddToCart }) {
-  console.log('🎴 ProductCard received product:', {
-    id: product.id,
-    title: product.title,
-    hasImage: !!product.image,
-    imageUrl: product.image?.url,
-    price: product.priceRange?.minVariantPrice?.amount || product.price
-  });
+'use client';
 
+import { useState } from 'react';
+import ProductDetailsModal from './ProductDetailsModal';
+
+export default function ProductCard({ product, onAddToCart }) {
+  const [showModal, setShowModal] = useState(false);
+  
   const defaultVariantId = product.variants && product.variants.length > 0 
     ? product.variants[0].id 
-    : product.id; // Fallback to product ID if no variants
-  
+    : product.id;
   const productPrice = product.priceRange?.minVariantPrice?.amount || product.price || '0.00';
-  const comparisonPrice = (parseFloat(productPrice) * 1.2).toFixed(2);
   
+  const handleCardClick = () => {
+    console.log('Card clicked, showing modal for:', product.title);
+    setShowModal(true);
+  };
+
+  const handleCloseModal = () => {
+    console.log('Closing modal for:', product.title);
+    setShowModal(false);
+  };
+
   return (
-    <div className="card h-100 shadow-sm border-0 overflow-hidden" style={{ marginBottom: '2rem' }}>
-      <div className="position-relative">
-        {product.image && product.image.url ? (
-          <img
-            src={product.image.url}
-            alt={product.image.alt || product.title}
-            className="card-img-top"
-            style={{ 
-              objectFit: 'cover', 
-              height: '250px', 
-              width: '100%',
-              transition: 'transform 0.3s ease'
-            }}
-            onMouseOver={(e) => e.target.style.transform = 'scale(1.05)'}
-            onMouseOut={(e) => e.target.style.transform = 'scale(1)'}
-            onError={(e) => {
-              console.error('❌ Image failed to load:', product.image.url);
-              e.target.style.display = 'none';
-              e.target.nextSibling.style.display = 'flex';
-            }}
-          />
-        ) : null}
-        
-        {/* Fallback placeholder for missing images */}
-        <div 
-          className="card-img-top bg-light d-flex align-items-center justify-content-center"
-          style={{ 
-            height: '250px',
-            display: product.image && product.image.url ? 'none' : 'flex'
-          }}
-        >
-          <div className="text-center">
-            <i className="bi bi-image text-muted mb-2" style={{ fontSize: '3rem' }}></i>
-            <p className="text-muted small mb-0">No Image Available</p>
+    <>
+      <div 
+        className="card shadow h-100 border-0 transition-hover" 
+        style={{ 
+          maxWidth: '100%', 
+          borderRadius: '12px',
+          overflow: 'hidden',
+          transition: 'transform 0.3s ease, box-shadow 0.3s ease',
+          cursor: 'pointer'
+        }}
+        onClick={handleCardClick}
+      >
+        <div className="position-relative">
+          {product.image && product.image.url ? (
+            <img
+              src={product.image.url}
+              alt={product.image.alt || product.title}
+              className="card-img-top"
+              style={{ 
+                objectFit: 'cover', 
+                height: '220px', 
+                width: '100%',
+              }}
+            />
+          ) : (
+            <div className="d-flex align-items-center justify-content-center bg-light" style={{ height: '220px', width: '100%' }}>
+              <i className="bi bi-image text-muted" style={{ fontSize: '3rem' }}></i>
+            </div>
+          )}
+        </div>
+        <div className="card-body d-flex flex-column p-4">
+          <h5 className="fw-bold mb-2" style={{ fontSize: '1.15rem', minHeight: '2.5rem', lineHeight: '1.3' }}>{product.title}</h5>
+          <div className="mb-3">
+            <span className="text-success fw-bold" style={{ fontSize: '1.2rem' }}>
+              {productPrice} {product.priceRange?.minVariantPrice?.currencyCode || ''}
+            </span>
           </div>
-        </div>
-        
-        {/* Sale Badge */}
-        <div className="position-absolute top-0 end-0 m-2">
-          <span className="badge bg-danger">
-            <i className="bi bi-fire me-1"></i>
-            Sale
-          </span>
-        </div>
-        
-        {/* Quick View Button */}
-        <div className="position-absolute bottom-0 end-0 m-2">
-          <button 
-            className="btn btn-white btn-sm rounded-circle shadow-sm opacity-75"
-            title="Quick View"
+          <p className="text-muted small mb-3" style={{ minHeight: '3.5rem', lineHeight: '1.5' }}>
+            {product.description || 'No description available.'}
+          </p>
+          <button
+            onClick={(e) => {
+              e.stopPropagation(); // Prevent the card click event
+              onAddToCart(defaultVariantId);
+            }}
+            className="btn btn-primary mt-auto w-100"
+            disabled={!defaultVariantId}
+            style={{ borderRadius: '8px' }}
           >
-            <i className="bi bi-eye"></i>
+            <i className="bi bi-cart-plus me-2"></i>
+            Add to Cart
           </button>
         </div>
       </div>
       
-      <div className="card-body d-flex flex-column p-4">
-        <div className="mb-3">
-          <h5 className="card-title mb-2 fw-bold" style={{
-            fontSize: '1.1rem',
-            lineHeight: '1.3',
-            height: '2.6rem',
-            overflow: 'hidden',
-            display: '-webkit-box',
-            WebkitLineClamp: 2,
-            WebkitBoxOrient: 'vertical'
-          }} title={product.title}>
-            {product.title}
-          </h5>
-          
-          <p className="card-text text-muted small mb-0" style={{ 
-            height: '4rem',
-            overflow: 'hidden',
-            display: '-webkit-box',
-            WebkitLineClamp: 3,
-            WebkitBoxOrient: 'vertical',
-            lineHeight: '1.4'
-          }}>
-            {product.description || 'High-quality product with excellent features and great value for money.'}
-          </p>
+      {showModal && (
+        <div id="product-modal-container" style={{ position: 'relative', zIndex: 1100 }}>
+          <ProductDetailsModal 
+            product={product} 
+            onClose={handleCloseModal}
+            onAddToCart={(variantId) => {
+              onAddToCart(variantId);
+              handleCloseModal();
+            }}
+          />
         </div>
-        
-        <div className="mt-auto">
-          {/* Price and Rating Section */}
-          <div className="d-flex justify-content-between align-items-start mb-3">
-            <div>
-              <div className="d-flex align-items-baseline gap-2 mb-1">
-                <span className="h5 text-success fw-bold mb-0">
-                  ${parseFloat(productPrice).toFixed(2)}
-                </span>
-                <small className="text-muted text-decoration-line-through">
-                  ${comparisonPrice}
-                </small>
-              </div>
-              <small className="text-success fw-medium">
-                <i className="bi bi-percent me-1"></i>
-                Save {Math.round((1 - parseFloat(productPrice) / parseFloat(comparisonPrice)) * 100)}%
-              </small>
-            </div>
-            
-            <div className="text-end">
-              <div className="d-flex align-items-center text-warning mb-1">
-                {[...Array(5)].map((_, i) => (
-                  <i key={i} className={`bi bi-star${i < 4 ? '-fill' : ''} me-1`} style={{ fontSize: '0.8rem' }}></i>
-                ))}
-                <small className="text-dark ms-1">4.5</small>
-              </div>
-              <small className="text-muted">(128 reviews)</small>
-            </div>
-          </div>
-          
-          {/* Action Buttons */}
-          <div className="d-grid gap-2">
-            <button
-              onClick={() => {
-                console.log('🛒 Adding to cart:', { productId: product.id, variantId: defaultVariantId });
-                onAddToCart(defaultVariantId);
-              }}
-              className="btn btn-primary btn-lg"
-              disabled={!defaultVariantId}
-            >
-              <i className="bi bi-cart-plus me-2"></i>
-              Add to Cart
-            </button>
-            
-            <div className="d-flex gap-2">
-              <button className="btn btn-outline-secondary flex-fill">
-                <i className="bi bi-heart me-1"></i>
-                Wishlist
-              </button>
-              <button className="btn btn-outline-info flex-fill">
-                <i className="bi bi-share me-1"></i>
-                Share
-              </button>
-            </div>
-          </div>
-          
-          {/* Product Features */}
-          <div className="mt-3 pt-3 border-top">
-            <div className="row g-0 text-center">
-              <div className="col-4">
-                <i className="bi bi-truck text-success d-block mb-1"></i>
-                <small className="text-muted">Free Ship</small>
-              </div>
-              <div className="col-4">
-                <i className="bi bi-arrow-clockwise text-info d-block mb-1"></i>
-                <small className="text-muted">Easy Return</small>
-              </div>
-              <div className="col-4">
-                <i className="bi bi-shield-check text-warning d-block mb-1"></i>
-                <small className="text-muted">Warranty</small>
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
-    </div>
+      )}
+    </>
   );
 }
