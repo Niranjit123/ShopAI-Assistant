@@ -1,49 +1,58 @@
 export default function ProductCard({ product, onAddToCart }) {
+  // This console.log is very helpful for debugging image issues
   console.log('🎴 ProductCard received product:', {
     id: product.id,
     title: product.title,
-    hasImage: !!product.image,
-    imageUrl: product.image?.url,
+    // Check if product.image object itself exists and then if .url exists
+    hasImageObject: !!product.image,
+    imageUrl: product.image?.url, // This is what the <img> tag uses
     price: product.priceRange?.minVariantPrice?.amount || product.price
   });
 
-  const defaultVariantId = product.variants && product.variants.length > 0 
-    ? product.variants[0].id 
+  const defaultVariantId = product.variants && product.variants.length > 0
+    ? product.variants[0].id
     : product.id; // Fallback to product ID if no variants
-  
+
   const productPrice = product.priceRange?.minVariantPrice?.amount || product.price || '0.00';
   const comparisonPrice = (parseFloat(productPrice) * 1.2).toFixed(2);
-  
+
   return (
+    // The style "marginBottom: '2rem'" here provides the vertical gap between products
     <div className="card h-100 shadow-sm border-0 overflow-hidden" style={{ marginBottom: '2rem' }}>
       <div className="position-relative">
+        {/* Image rendering logic - relies on product.image.url being correct */}
         {product.image && product.image.url ? (
           <img
             src={product.image.url}
-            alt={product.image.alt || product.title}
+            alt={product.image.alt || product.title || 'Product Image'} // Use alt from processed product.image
             className="card-img-top"
-            style={{ 
-              objectFit: 'cover', 
-              height: '250px', 
+            style={{
+              objectFit: 'cover',
+              height: '250px',
               width: '100%',
               transition: 'transform 0.3s ease'
             }}
             onMouseOver={(e) => e.target.style.transform = 'scale(1.05)'}
             onMouseOut={(e) => e.target.style.transform = 'scale(1)'}
             onError={(e) => {
-              console.error('❌ Image failed to load:', product.image.url);
-              e.target.style.display = 'none';
-              e.target.nextSibling.style.display = 'flex';
+              console.error('❌ Image failed to load in ProductCard:', product.image.url, 'for product:', product.title);
+              e.target.style.display = 'none'; // Hide broken image
+              // Ensure the next sibling (fallback div) is shown
+              if (e.target.nextSibling && e.target.nextSibling.style) {
+                 e.target.nextSibling.style.display = 'flex';
+              }
             }}
           />
-        ) : null}
-        
+        ) : null} {/* Render nothing if product.image.url is not available, fallback below will show */}
+
         {/* Fallback placeholder for missing images */}
-        <div 
+        {/* This div will display if 'product.image && product.image.url' is falsy */}
+        <div
           className="card-img-top bg-light d-flex align-items-center justify-content-center"
-          style={{ 
+          style={{
             height: '250px',
-            display: product.image && product.image.url ? 'none' : 'flex'
+            // Show this fallback if the image condition (product.image && product.image.url) is false
+            display: (product.image && product.image.url) ? 'none' : 'flex'
           }}
         >
           <div className="text-center">
@@ -51,7 +60,7 @@ export default function ProductCard({ product, onAddToCart }) {
             <p className="text-muted small mb-0">No Image Available</p>
           </div>
         </div>
-        
+
         {/* Sale Badge */}
         <div className="position-absolute top-0 end-0 m-2">
           <span className="badge bg-danger">
@@ -59,10 +68,10 @@ export default function ProductCard({ product, onAddToCart }) {
             Sale
           </span>
         </div>
-        
+
         {/* Quick View Button */}
         <div className="position-absolute bottom-0 end-0 m-2">
-          <button 
+          <button
             className="btn btn-white btn-sm rounded-circle shadow-sm opacity-75"
             title="Quick View"
           >
@@ -70,13 +79,13 @@ export default function ProductCard({ product, onAddToCart }) {
           </button>
         </div>
       </div>
-      
+
       <div className="card-body d-flex flex-column p-4">
         <div className="mb-3">
           <h5 className="card-title mb-2 fw-bold" style={{
             fontSize: '1.1rem',
             lineHeight: '1.3',
-            height: '2.6rem',
+            height: '2.6rem', // Approx 2 lines
             overflow: 'hidden',
             display: '-webkit-box',
             WebkitLineClamp: 2,
@@ -84,9 +93,9 @@ export default function ProductCard({ product, onAddToCart }) {
           }} title={product.title}>
             {product.title}
           </h5>
-          
-          <p className="card-text text-muted small mb-0" style={{ 
-            height: '4rem',
+
+          <p className="card-text text-muted small mb-0" style={{
+            height: '4.2rem', // Approx 3 lines (1.4 line height * 3)
             overflow: 'hidden',
             display: '-webkit-box',
             WebkitLineClamp: 3,
@@ -96,7 +105,7 @@ export default function ProductCard({ product, onAddToCart }) {
             {product.description || 'High-quality product with excellent features and great value for money.'}
           </p>
         </div>
-        
+
         <div className="mt-auto">
           {/* Price and Rating Section */}
           <div className="d-flex justify-content-between align-items-start mb-3">
@@ -114,7 +123,7 @@ export default function ProductCard({ product, onAddToCart }) {
                 Save {Math.round((1 - parseFloat(productPrice) / parseFloat(comparisonPrice)) * 100)}%
               </small>
             </div>
-            
+
             <div className="text-end">
               <div className="d-flex align-items-center text-warning mb-1">
                 {[...Array(5)].map((_, i) => (
@@ -125,21 +134,26 @@ export default function ProductCard({ product, onAddToCart }) {
               <small className="text-muted">(128 reviews)</small>
             </div>
           </div>
-          
+
           {/* Action Buttons */}
           <div className="d-grid gap-2">
             <button
               onClick={() => {
                 console.log('🛒 Adding to cart:', { productId: product.id, variantId: defaultVariantId });
-                onAddToCart(defaultVariantId);
+                if (defaultVariantId) { // Ensure defaultVariantId is valid before calling
+                  onAddToCart(defaultVariantId);
+                } else {
+                  console.warn("Cannot add to cart: No valid variant ID found for product", product.title);
+                  // Optionally, notify the user or disable the button more explicitly
+                }
               }}
               className="btn btn-primary btn-lg"
-              disabled={!defaultVariantId}
+              disabled={!defaultVariantId} // Disable if no valid variant ID
             >
               <i className="bi bi-cart-plus me-2"></i>
               Add to Cart
             </button>
-            
+
             <div className="d-flex gap-2">
               <button className="btn btn-outline-secondary flex-fill">
                 <i className="bi bi-heart me-1"></i>
@@ -151,7 +165,7 @@ export default function ProductCard({ product, onAddToCart }) {
               </button>
             </div>
           </div>
-          
+
           {/* Product Features */}
           <div className="mt-3 pt-3 border-top">
             <div className="row g-0 text-center">
