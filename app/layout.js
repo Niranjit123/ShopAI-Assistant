@@ -37,7 +37,7 @@ export default function RootLayout({ children }) {
           {children}
         </main>
         
-        <footer className="bg-light border-top py-4 mt-5">
+        {/* <footer className="bg-light border-top py-4 mt-5">
           <div className="container">
             <div className="row align-items-center">
               <div className="col-md-6">
@@ -54,7 +54,7 @@ export default function RootLayout({ children }) {
               </div>
             </div>
           </div>
-        </footer>
+        </footer> */}
       </body>
     </html>
   );

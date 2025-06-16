@@ -2,23 +2,104 @@
 
 import { useState, useEffect } from 'react';
 
-export default function ChatInterface({ messages, onSendMessage, isLoading, messagesEndRef }) {
+export default function ChatInterface({ messages, onSendMessage, isLoading, messagesEndRef, onChatProductCardClick }) {
   const [inputValue, setInputValue] = useState('');
 
   const handleSubmit = (e) => {
     e.preventDefault();
     if (!inputValue.trim()) return;
     
-    onSendMessage(inputValue);
+    // Pass the current messages array as the history to the parent handler
+    onSendMessage(inputValue, messages); 
     setInputValue('');
   };
 
   const renderMessageContent = (message) => {
-    // Check if message contains images
-    if (message.images && message.images.length > 0) {
+    if (message.role === 'assistant' && message.isProductResponse && message.images && message.images.length > 0) {
+      const productsToShow = message.images;
+
       return (
         <div>
-          <div className="mb-3">{message.content}</div>
+          {message.content && <div className="mb-3">{message.content}</div>}
+          
+          <div className="row g-3">
+            {productsToShow.map((product, index) => (
+              <div key={product.id || index} className="col-12">
+                <div 
+                  className="card shadow-sm" 
+                  style={{ cursor: 'pointer' }}
+                  onClick={() => onChatProductCardClick(product.id)} // Call handler with product ID
+                >
+                  <div className="row g-0">
+                    <div className="col-4 col-sm-3">
+                      {product.url && (
+                        <img
+                          src={product.url}
+                          alt={product.alt || product.title}
+                          className="img-fluid rounded-start w-100"
+                          style={{ 
+                            height: '120px',
+                            objectFit: 'cover',
+                            // Removed direct onClick for image to avoid conflict with card click
+                            // The card click will handle opening the modal.
+                          }}
+                        />
+                      )}
+                      {!product.url && (
+                        <div className="d-flex align-items-center justify-content-center bg-light rounded-start" style={{ height: '120px', width: '100%' }}>
+                          <i className="bi bi-image text-muted" style={{ fontSize: '2rem' }}></i>
+                        </div>
+                      )}
+                    </div>
+                    <div className="col-8 col-sm-9">
+                      <div className="card-body p-2 p-sm-3">
+                        <h6 className="card-title fw-bold mb-1" style={{ fontSize: '0.9rem' }}>
+                          {product.title || 'Product'}
+                        </h6>
+                        <p className="card-text small text-muted mb-1" style={{ maxHeight: '40px', overflow: 'hidden', textOverflow: 'ellipsis', fontSize: '0.8rem' }}>
+                          {product.description || 'No description available.'}
+                        </p>
+                        {product.price && (
+                          <p className="card-text fw-semibold text-success mb-0" style={{ fontSize: '0.85rem' }}>
+                            ${parseFloat(product.price).toFixed(2)}
+                          </p>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+
+          {/* Button to search for more similar items */}
+          {productsToShow.length > 0 && (
+            <div className="mt-3">
+              <button 
+                className="btn btn-outline-primary btn-sm"
+                onClick={() => {
+                  const firstProductTitle = productsToShow[0]?.title;
+                  if (firstProductTitle) {
+                    onSendMessage(`Find more items similar to ${firstProductTitle}`);
+                  } else {
+                    onSendMessage('Search for more similar items');
+                  }
+                }}
+                disabled={isLoading}
+              >
+                <i className="bi bi-search me-1"></i> Search for more similar items
+              </button>
+            </div>
+          )}
+        </div>
+      );
+    }
+    
+    // Fallback for original image display (non-product specific images)
+    if (message.role === 'assistant' && message.images && message.images.length > 0 && !message.isProductResponse) {
+      return (
+        <div>
+          {message.content && <div className="mb-3">{message.content}</div>}
           <div className="row g-2">
             {message.images.map((image, index) => (
               <div key={index} className="col-6 col-md-4">
@@ -36,7 +117,6 @@ export default function ChatInterface({ messages, onSendMessage, isLoading, mess
                     onMouseOver={(e) => e.target.style.transform = 'scale(1.05)'}
                     onMouseOut={(e) => e.target.style.transform = 'scale(1)'}
                     onClick={() => {
-                      // Open image in modal or new tab
                       window.open(image.url, '_blank');
                     }}
                   />
@@ -56,6 +136,7 @@ export default function ChatInterface({ messages, onSendMessage, isLoading, mess
       );
     }
     
+    // Default: render text content or user messages
     return message.content;
   };
 

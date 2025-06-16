@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect } from 'react';
+import { useState, useEffect } from 'react';;
 
 export default function ProductDetailsModal({ product, onClose, onAddToCart }) {
   // Close modal when Escape key is pressed
@@ -32,10 +32,29 @@ export default function ProductDetailsModal({ product, onClose, onAddToCart }) {
 
   if (!product) return null;
 
-  const defaultVariantId = product.variants && product.variants.length > 0 
-    ? product.variants[0].id 
-    : product.id;
-  
+  let defaultVariantId = null;
+  let isAddToCartDisabled = true; // Default to true
+
+  // Log the product and its variants here to inspect
+  console.log('[ProductDetailsModal] Product received for modal:', JSON.stringify(product, null, 2));
+
+  if (product.variants && product.variants.length > 0) {
+    const firstVariant = product.variants[0];
+    console.log('[ProductDetailsModal] Checking firstVariant:', JSON.stringify(firstVariant, null, 2));
+
+    if (firstVariant && firstVariant.id && typeof firstVariant.id === 'string' && firstVariant.id.includes('ProductVariant')) {
+      defaultVariantId = firstVariant.id;
+      isAddToCartDisabled = false;
+      console.log(`[ProductDetailsModal] VALID ProductVariant GID found: ${defaultVariantId} for product: ${product.title}`);
+    } else {
+      console.warn(`[ProductDetailsModal] INVALID or MISSING ProductVariant GID for product: ${product.title}. Variant ID: '${firstVariant ? firstVariant.id : 'N/A'}', Type: '${firstVariant ? typeof firstVariant.id : 'N/A'}', Includes 'ProductVariant': ${firstVariant && typeof firstVariant.id === 'string' ? firstVariant.id.includes('ProductVariant') : 'N/A'}`);
+      isAddToCartDisabled = true; // Ensure it's disabled if checks fail
+    }
+  } else {
+    console.warn(`[ProductDetailsModal] Product '${product.title}' has no variants array or variants array is empty.`);
+    isAddToCartDisabled = true; // Ensure it's disabled if no variants
+  }
+
   const productPrice = product.priceRange?.minVariantPrice?.amount || product.price || '0.00';
   const currencyCode = product.priceRange?.minVariantPrice?.currencyCode || '';
 
@@ -145,9 +164,17 @@ export default function ProductDetailsModal({ product, onClose, onAddToCart }) {
               )}
               
               <button
-                onClick={() => onAddToCart(defaultVariantId)}
+                onClick={() => {
+                  // This check ensures we only proceed if the button should have been enabled
+                  if (!isAddToCartDisabled && defaultVariantId) {
+                    onAddToCart(defaultVariantId);
+                  } else {
+                    console.error("ProductDetailsModal: Add to Cart button clicked, but defaultVariantId is invalid or button should be disabled. State:", { isAddToCartDisabled, defaultVariantId, productTitle: product.title });
+                    // Optionally, inform the user via UI if the button was enabled erroneously
+                  }
+                }}
                 className="btn btn-primary w-100"
-                disabled={!defaultVariantId}
+                disabled={isAddToCartDisabled} // This uses the variable determined above
               >
                 <i className="bi bi-cart-plus me-2"></i>
                 Add to Cart

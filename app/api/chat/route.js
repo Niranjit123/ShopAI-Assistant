@@ -9,17 +9,17 @@ import { dispatch, INTENT_TYPES } from '@/lib/agents/dispatchAgent';
 import { 
   classifyIntentWithLLM as classifyIntent, 
   extractEntitiesWithLLM as extractEntities,
-  ConversationContext 
+  // ConversationContext // We will rely on messageHistory for now, ConversationContext can be integrated later if needed
 } from '@/lib/intent-recognition';
 
 // Initialize clients
 const gemini = new GeminiClient(process.env.GEMINI_API_KEY);
 const shopify = new ShopifyClient(
-  process.env.SHOPIFY_STORE_DOMAIN,
-  process.env.SHOPIFY_STOREFRONT_ACCESS_TOKEN
+  process.env.NEXT_PUBLIC_SHOPIFY_DOMAIN,
+  process.env.NEXT_PUBLIC_SHOPIFY_STOREFRONT_ACCESS_TOKEN
 );
 
-const sessions = {}; // Store conversation sessions
+// const sessions = {}; // Store conversation sessions - We'll manage history primarily via client, but can store server-side if needed.
 
 const INTENT_MAP = {
   search_products: INTENT_TYPES.PRODUCT,
@@ -37,37 +37,28 @@ const processProductsWithImages = (products) => {
     return [];
   }
   
-  console.log(`🔄 Processing ${products.length} products for images...`);
+  console.log(`🔄 Processing ${products.length} products for images (in API route)...`);
   
   return products.map((product, index) => {
-    console.log(`📦 Processing product ${index + 1}:`, {
-      id: product.id,
-      title: product.title,
-      hasImages: !!(product.images && product.images.length > 0),
-      hasImage: !!product.image,
-      imageCount: product.images ? product.images.length : 0
-    });
-    
     const processedProduct = { ...product };
-    
-    // Ensure image structure is consistent
-    if (product.images && product.images.length > 0) {
-      const imageUrl = product.images[0].url || product.images[0].src;
-      processedProduct.image = {
-        url: imageUrl,
-        alt: product.title || 'Product Image'
-      };
-      console.log(`✅ Image found for ${product.title}:`, imageUrl);
-    } else if (product.image) {
-      // Handle single image case
-      const imageUrl = product.image.url || product.image.src || product.image;
-      processedProduct.image = {
-        url: imageUrl,
-        alt: product.title || 'Product Image'
-      };
-      console.log(`✅ Single image found for ${product.title}:`, imageUrl);
+    let imageUrl = null;
+    let imageAlt = product.title || 'Product Image';
+
+    // Correctly access image URL from Shopify's typical structure
+    if (product.images && product.images.edges && product.images.edges.length > 0 && product.images.edges[0].node) {
+      imageUrl = product.images.edges[0].node.url;
+      imageAlt = product.images.edges[0].node.altText || imageAlt;
+      console.log(`✅ [API route] Image found for ${product.title} via product.images.edges:`, imageUrl);
+    } else if (product.image && product.image.url) { // Fallback for an already flattened image structure
+      imageUrl = product.image.url;
+      imageAlt = product.image.alt || imageAlt;
+      console.log(`✅ [API route] Image found for ${product.title} via product.image.url:`, imageUrl);
     } else {
-      console.log(`❌ No image found for ${product.title}`);
+      console.log(`❌ [API route] No image found for ${product.title}`);
+    }
+
+    if (imageUrl) {
+      processedProduct.image = { url: imageUrl, alt: imageAlt };
     }
     
     // Ensure price structure is consistent
@@ -84,7 +75,7 @@ const processProductsWithImages = (products) => {
 };
 
 // Helper function to create chat images from products
-const createChatImages = (products) => {
+const createChatImages = (products) => { // products here are the result of processProductsWithImages
   if (!products || !Array.isArray(products)) {
     console.log('❌ No products provided to createChatImages');
     return [];
@@ -92,29 +83,39 @@ const createChatImages = (products) => {
   
   const chatImages = products
     .filter(product => {
-      const hasImage = product.image && product.image.url;
+      const hasImage = product.image && product.image.url; // Relies on processProductsWithImages
       if (!hasImage) {
-        console.log(`⚠️ Filtering out ${product.title} - no image URL`);
+        console.log(`[API route] ⚠️ Filtering out ${product.title} from chatImages - no image.url`);
       }
       return hasImage;
     })
-    .slice(0, 6) // Limit to 6 images to avoid overwhelming the chat
+    .slice(0, 6) // Limit to 6 images
     .map(product => ({
+      id: product.id, // Pass product ID for chat card clicks
       url: product.image.url,
-      alt: product.title || 'Product',
+      alt: product.image.alt || product.title || 'Product',
       title: product.title,
-      price: product.priceRange?.minVariantPrice?.amount || product.price
+      price: product.priceRange?.minVariantPrice?.amount || product.price,
+      description: stripHtml(product.description || product.descriptionHtml || '').substring(0,70) + '...'
     }));
     
-  console.log(`🖼️ Created ${chatImages.length} chat images from ${products.length} products`);
+  console.log(`🖼️ [API route] Created ${chatImages.length} chat images from ${products.length} products`);
   return chatImages;
 };
 
+// Helper function to strip HTML (if not already available globally here)
+function stripHtml(html) {
+  // Basic stripping, consider a library for robustness if complex HTML is common
+  if (!html) return "";
+  return html.replace(/<[^>]*>?/gm, '');
+}
+
 export async function POST(request) {
   try {
-    const { message, messageHistory, sessionId = 'default' } = await request.json();
+    const { message, messageHistory = [], sessionId = 'default' } = await request.json(); // Expect messageHistory from client
     
     console.log(`📨 Received message: "${message}"`);
+    console.log(`📜 Received messageHistory length: ${messageHistory.length}`);
 
     // Detect language and translate incoming message to English if needed
     let translatedMessage = message;
@@ -132,44 +133,55 @@ export async function POST(request) {
       translatedMessage = message; // Fallback to original message
     }
 
-    // Get or create conversation context
-    if (!sessions[sessionId]) {
-      sessions[sessionId] = {
-        context: new ConversationContext(),
-        cartId: null
-      };
-    }
-    
-    const session = sessions[sessionId];
+    // Get or create conversation context (Simplified session for now)
+    // if (!sessions[sessionId]) {
+    //   sessions[sessionId] = {
+    //     history: [], // Store history here if needed for server-side state
+    //     cartId: null
+    //   };
+    // }
+    // const session = sessions[sessionId];
+    // let currentConversationHistory = session.history; // Or use messageHistory directly from client
 
-    // Step 1: Classify intent
-    const { intent, confidence } = await classifyIntent(translatedMessage, gemini);
+    let currentConversationHistory = messageHistory; // Use history from client
+
+    // Step 1: Classify intent, now with history
+    const { intent, confidence } = await classifyIntent(translatedMessage, gemini, currentConversationHistory);
     console.log(`🎯 Classified intent: ${intent} (confidence: ${confidence})`);
 
     // Map to our agent system intent
     const agentIntent = INTENT_MAP[intent] || INTENT_TYPES.FALLBACK;
     console.log(`🔄 Mapped intent to agent system: ${agentIntent}`);
     
-    // Step 2: Extract entities
-    let entities = await extractEntities(translatedMessage, intent, gemini);
+    // Step 2: Extract entities, now with history
+    let entities = await extractEntities(translatedMessage, intent, gemini, currentConversationHistory);
     console.log(`📊 Extracted entities:`, JSON.stringify(entities, null, 2));
     
-    // Step 3: Apply contextual understanding
-    const { intent: contextualIntent, entities: contextualEntities } = 
-      session.context.updateContext(translatedMessage, intent, entities);
+    // Step 3: Contextual understanding (Placeholder for ConversationContext if re-integrated)
+    // const { intent: contextualIntent, entities: contextualEntities } = 
+    //   session.context.updateContext(translatedMessage, intent, entities);
+    // For now, use entities directly, assuming ConversationContext might be enhanced later
+    const contextualIntent = INTENT_MAP[intent] || INTENT_TYPES.FALLBACK; // Re-mapping based on raw intent
+    const contextualEntities = entities;
 
-    // Step 4: Process intent using agent system
+    // Prepare history for dispatch: current message + previous history
+    const userMessageEntry = { role: 'user', content: translatedMessage };
+    const historyForDispatch = [...currentConversationHistory, userMessageEntry];
+
+
+    // Step 4: Process intent using agent system, now with history
     console.log(`🤖 Dispatching to agent with intent: ${agentIntent}`);
-    const agentResponse = await dispatch(translatedMessage, agentIntent, contextualEntities);
+    console.log('Dispatching message:', { content: translatedMessage, type: 'text' });
+    const agentResponse = await dispatch({ content: translatedMessage, type: 'text' }, agentIntent, contextualEntities, historyForDispatch);
     
     // 🔍 DETAILED LOGGING OF AGENT RESPONSE
-    console.log('🔍 FULL AGENT RESPONSE:', JSON.stringify(agentResponse, null, 2));
+    // console.log('🔍 FULL AGENT RESPONSE:', JSON.stringify(agentResponse, null, 2)); // <--- COMMENT THIS LINE OUT
     
     if (agentResponse.metadata) {
       console.log('📋 Agent Response Metadata:', JSON.stringify(agentResponse.metadata, null, 2));
       
       if (agentResponse.metadata.products) {
-        console.log(`📦 Found ${agentResponse.metadata.products.length} products in agent response`);
+        console.log(`📦 Found ${agentResponse.metadata.products.length} products in agent response`); // This is the log that appears after the one you want to remove
         agentResponse.metadata.products.forEach((product, index) => {
           console.log(`Product ${index + 1}:`, {
             id: product.id,
@@ -193,13 +205,15 @@ export async function POST(request) {
     // Handle special cases for product-related intents
     if (agentIntent === INTENT_TYPES.PRODUCT) {
       if (agentResponse.metadata?.products) {
-        console.log('🔄 Processing products with images...');
-        products = processProductsWithImages(agentResponse.metadata.products);
-        chatImages = createChatImages(products);
+        console.log('🔄 [API route] Processing products with images for agent response...');
+        const tempProcessedProducts = processProductsWithImages(agentResponse.metadata.products);
+        products = tempProcessedProducts; // products for the main product grid
+        chatImages = createChatImages(tempProcessedProducts); // chatImages for the chat interface
         
-        // Don't append product information to the chat message
-        // Instead, just mention that products were found without listing them
-        if (products.length > 0) {
+        // The 'response' variable (LLM text) should ideally not list products if chatImages will show them.
+        // This part is handled by the productAgent's prompt construction.
+        // We can still append a generic "I found products" message if the LLM didn't.
+        if (products.length > 0 && !response.toLowerCase().includes("check out the product section below")) {
           const productCount = products.length;
           const categoryHint = entities.category ? ` in ${entities.category}` : '';
           response += `\n\nI found ${productCount} product${productCount > 1 ? 's' : ''}${categoryHint} that might interest you. Check out the product section below.`;
@@ -228,21 +242,32 @@ export async function POST(request) {
       }
     }
 
+    // Append assistant's response to history
+    const assistantMessageEntry = { role: 'assistant', content: translatedResponse };
+    const updatedHistory = [...historyForDispatch, assistantMessageEntry];
+
+    // Update server-side session history if used
+    // session.history = updatedHistory;
+
     const finalResponse = {
       response: translatedResponse,
-      products,
+      products, // These are the full product details for the product grid
       cartUpdate,
       sessionId,
-      intent: contextualIntent,
-      entities: contextualEntities,
-      metadata: {
+      intent: contextualIntent, 
+      entities: contextualEntities, 
+      detectedLang: detectedLang, 
+      messageHistory: updatedHistory, 
+      metadata: { // This metadata is sent to the client (page.js)
         ...agentResponse.metadata,
+        // Ensure products in metadata are the ones processed for the grid if productAgent didn't already process them
+        products: products.length > 0 ? products : (agentResponse.metadata.products || []), 
         chatImages: chatImages.length > 0 ? chatImages : undefined,
         hasImages: chatImages.length > 0
       }
     };
 
-    console.log('🚀 FINAL API RESPONSE:', JSON.stringify(finalResponse, null, 2));
+    // console.log('🚀 FINAL API RESPONSE:', JSON.stringify(finalResponse, null, 2));
 
     return NextResponse.json(finalResponse);
 
