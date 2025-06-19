@@ -10,6 +10,7 @@
   },
   "dependencies": {
     "@pinecone-database/pinecone": "^6.1.0",
+    "@supabase/supabase-js": "^2.50.0",
     "@vitalets/google-translate-api": "^2.0.1",
     "bootstrap": "^5.3.6",
     "detect-language": "^1.0.2",
