@@ -6,10 +6,10 @@ import ShopifyClient from '@/lib/shopify';
 import * as translation from '@/lib/translation';
 import { dispatch, INTENT_TYPES } from '@/lib/agents/dispatchAgent';
 
-import { 
-  classifyIntentWithLLM as classifyIntent, 
+import {
+  classifyIntentWithLLM as classifyIntent,
   extractEntitiesWithLLM as extractEntities,
-  // ConversationContext // We will rely on messageHistory for now, ConversationContext can be integrated later if needed
+  INTENTS as LLM_INTENTS // Import the INTENTS object
 } from '@/lib/intent-recognition';
 
 // Initialize clients
@@ -21,13 +21,16 @@ const shopify = new ShopifyClient(
 
 // const sessions = {}; // Store conversation sessions - We'll manage history primarily via client, but can store server-side if needed.
 
+// Updated INTENT_MAP
 const INTENT_MAP = {
-  search_products: INTENT_TYPES.PRODUCT,
-  product_details: INTENT_TYPES.PRODUCT,
-  add_to_cart: INTENT_TYPES.PRODUCT,
-  checkout: INTENT_TYPES.SUPPORT,
-  order_status: INTENT_TYPES.SUPPORT,
-  general_inquiry: INTENT_TYPES.FAQ,
+  [LLM_INTENTS.SEARCH_PRODUCTS]: INTENT_TYPES.PRODUCT,
+  [LLM_INTENTS.PRODUCT_DETAILS]: INTENT_TYPES.PRODUCT,
+  [LLM_INTENTS.ADD_TO_CART]: INTENT_TYPES.PRODUCT,
+  [LLM_INTENTS.CHECKOUT]: INTENT_TYPES.SUPPORT, // If checkout implies needing guided support or handling potential issues
+  [LLM_INTENTS.ORDER_STATUS]: INTENT_TYPES.SUPPORT, // If order status implies lookup or potential issue handling
+  [LLM_INTENTS.FAQ]: INTENT_TYPES.FAQ,
+  [LLM_INTENTS.SUPPORT]: INTENT_TYPES.SUPPORT,
+  [LLM_INTENTS.GENERAL_INQUIRY]: INTENT_TYPES.FAQ, // Or INTENT_TYPES.FALLBACK if FAQ agent can't handle chit-chat
 };
 
 // Helper function to process products and extract images
@@ -112,10 +115,14 @@ function stripHtml(html) {
 
 export async function POST(request) {
   try {
-    const { message, messageHistory = [], sessionId = 'default' } = await request.json(); // Expect messageHistory from client
-    
-    console.log(`📨 Received message: "${message}"`);
-    console.log(`📜 Received messageHistory length: ${messageHistory.length}`);
+    const { message, messageHistory = [], sessionId = 'default' } = await request.json();
+
+    // THIS IS THE CRUCIAL SERVER-SIDE LOG
+    console.log(`📨 Received message: \"${message}\"`);
+    console.log(`📜 Received messageHistory (from client) length: ${messageHistory.length}`); // Let's make this log very specific
+    if (messageHistory.length > 0) {
+      console.log(`📜 Received messageHistory (from client) content:`, JSON.stringify(messageHistory));
+    }
 
     // Detect language and translate incoming message to English if needed
     let translatedMessage = message;
@@ -146,22 +153,19 @@ export async function POST(request) {
     let currentConversationHistory = messageHistory; // Use history from client
 
     // Step 1: Classify intent, now with history
-    const { intent, confidence } = await classifyIntent(translatedMessage, gemini, currentConversationHistory);
-    console.log(`🎯 Classified intent: ${intent} (confidence: ${confidence})`);
+    const { intent: classifiedLlmIntent, confidence } = await classifyIntent(translatedMessage, gemini, currentConversationHistory); // Use classifiedLlmIntent
+    console.log(`🎯 Classified intent: ${classifiedLlmIntent} (confidence: ${confidence})`);
 
     // Map to our agent system intent
-    const agentIntent = INTENT_MAP[intent] || INTENT_TYPES.FALLBACK;
+    const agentIntent = INTENT_MAP[classifiedLlmIntent] || INTENT_TYPES.FALLBACK; // Use classifiedLlmIntent here
     console.log(`🔄 Mapped intent to agent system: ${agentIntent}`);
-    
+
     // Step 2: Extract entities, now with history
-    let entities = await extractEntities(translatedMessage, intent, gemini, currentConversationHistory);
+    let entities = await extractEntities(translatedMessage, classifiedLlmIntent, gemini, currentConversationHistory); // Use classifiedLlmIntent here
     console.log(`📊 Extracted entities:`, JSON.stringify(entities, null, 2));
-    
-    // Step 3: Contextual understanding (Placeholder for ConversationContext if re-integrated)
-    // const { intent: contextualIntent, entities: contextualEntities } = 
-    //   session.context.updateContext(translatedMessage, intent, entities);
-    // For now, use entities directly, assuming ConversationContext might be enhanced later
-    const contextualIntent = INTENT_MAP[intent] || INTENT_TYPES.FALLBACK; // Re-mapping based on raw intent
+
+    // Step 3: Contextual understanding
+    const contextualIntent = INTENT_MAP[classifiedLlmIntent] || INTENT_TYPES.FALLBACK; // Use classifiedLlmIntent here
     const contextualEntities = entities;
 
     // Prepare history for dispatch: current message + previous history
@@ -274,7 +278,7 @@ export async function POST(request) {
   } catch (error) {
     console.error('❌ Error in chat API:', error);
     return NextResponse.json(
-      { 
+      {
         error: 'An error occurred processing your message',
         response: 'I apologize, but I encountered an error while processing your request. Please try again or rephrase your question.'
       },

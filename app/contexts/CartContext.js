@@ -40,8 +40,8 @@ export const CartProvider = ({ children }) => {
           {
             productId: product.id,
             variantId: variant.id,
-            name: product.name,
-            title: product.name, // Ensure this uses product.name
+            name: product.title || product.name, // Use product.title if available, otherwise product.name
+            title: product.title || product.name, // Use product.title if available, otherwise product.name
             variantTitle: variant.title,
             price: variant.price.amount,
             currencyCode: variant.price.currencyCode,
